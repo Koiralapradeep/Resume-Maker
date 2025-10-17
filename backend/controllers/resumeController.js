@@ -4,6 +4,17 @@ import { fileURLToPath } from "url";
 import handlebars from "handlebars";
 import puppeteer from "puppeteer";
 
+const executablePath =
+  process.env.PUPPETEER_EXECUTABLE_PATH ||
+  (process.platform === "win32"
+    ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    : "/usr/bin/google-chrome");
+
+const browser = await puppeteer.launch({
+  executablePath,
+  args: ["--no-sandbox", "--disable-setuid-sandbox"],
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
