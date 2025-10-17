@@ -1,22 +1,5 @@
-import path from "path";
-import fs from "fs";
-import puppeteer from "puppeteer";
-import Handlebars from "handlebars";
-import dotenv from "dotenv";
+import PDFDocument from "pdfkit";
 
-dotenv.config();
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
-
-const esc = (str = "") =>
-  String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-
-// Main Controller
 export const generateResume = async (req, res) => {
   try {
     const data = req.body || {};
@@ -30,81 +13,68 @@ export const generateResume = async (req, res) => {
       certifications = [],
       languages = [],
       interests = [],
-      template = "modern",
     } = data;
 
-    // Absolute photo path
-    let photoUrl = personal?.photo || "";
-    if (photoUrl && !photoUrl.startsWith("http")) {
-      photoUrl = `${BACKEND_URL.replace(/\/$/, "")}/${photoUrl.replace(/^\/+/, "")}`;
+    const doc = new PDFDocument({ margin: 40 });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      res
+        .set({
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename=${(personal.name || "resume")
+            .replace(/\s+/g, "_")
+            .toLowerCase()}.pdf`,
+        })
+        .send(pdfBuffer);
+    });
+
+    // --- Resume Header ---
+    doc.fontSize(22).text(personal.name || "Unnamed", { align: "center" });
+    if (personal.email) doc.fontSize(12).text(`Email: ${personal.email}`, { align: "center" });
+    if (personal.phone) doc.text(`Phone: ${personal.phone}`, { align: "center" });
+    doc.moveDown();
+
+    // --- Summary ---
+    if (summary) {
+      doc.fontSize(14).text("Professional Summary", { underline: true });
+      doc.fontSize(12).text(summary);
+      doc.moveDown();
     }
 
-    // Load Template
-    const templatePath = path.join(process.cwd(), "templates", `${template}Template.html`);
-    const templateHtml = fs.readFileSync(templatePath, "utf8");
+    // --- Education ---
+    if (education.length) {
+      doc.fontSize(14).text("Education", { underline: true });
+      education.forEach((edu) => {
+        doc.fontSize(12).text(`${edu.degree || ""} — ${edu.institution || ""}`);
+        if (edu.year) doc.text(`Year: ${edu.year}`);
+        doc.moveDown(0.5);
+      });
+    }
 
-    // Compile template
-    const compileTemplate = Handlebars.compile(templateHtml);
-    const renderedHtml = compileTemplate({
-      personal: { ...personal, photo: photoUrl },
-      summary,
-      education,
-      experience,
-      skills,
-      projects,
-      certifications,
-      languages,
-      interests,
-    });
+    // --- Experience ---
+    if (experience.length) {
+      doc.addPage();
+      doc.fontSize(14).text("Experience", { underline: true });
+      experience.forEach((exp) => {
+        doc.fontSize(12).text(`${exp.role || ""} at ${exp.company || ""}`);
+        if (exp.duration) doc.text(`Duration: ${exp.duration}`);
+        if (exp.description) doc.text(exp.description);
+        doc.moveDown(0.5);
+      });
+    }
 
-    // Launch Puppeteer
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-    const page = await browser.newPage();
+    // --- Skills ---
+    if (skills.length) {
+      doc.moveDown();
+      doc.fontSize(14).text("Skills", { underline: true });
+      doc.fontSize(12).text(skills.join(", "));
+    }
 
-    // Apply safe fallback for unsupported color spaces + avoid page breaks
-    const safeCss = `
-      * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-scheme: light !important;
-      }
-      html, body {
-        margin: 0;
-        padding: 0;
-        background: white;
-      }
-      .no-break, header, .resume-header, .resume-summary {
-        page-break-inside: avoid !important;
-        page-break-after: avoid !important;
-      }
-    `;
-    await page.setContent(
-      `<style>${safeCss}</style>${renderedHtml}`,
-      { waitUntil: "networkidle0" }
-    );
-
-    const pdfBuffer = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "15mm", bottom: "15mm", left: "12mm", right: "12mm" },
-      preferCSSPageSize: true,
-    });
-
-    await browser.close();
-
-    res.set({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename=${(personal.name || "resume")
-        .replace(/\s+/g, "_")
-        .toLowerCase()}.pdf`,
-    });
-    res.send(pdfBuffer);
+    doc.end();
   } catch (err) {
-  console.error("PDF generation failed:", err);
-  res.status(500).json({ error: err.message });
-}
-
+    console.error("PDF generation failed:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
