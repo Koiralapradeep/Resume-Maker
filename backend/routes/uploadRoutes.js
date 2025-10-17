@@ -8,31 +8,44 @@ const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Folder where files will be saved
+// ======================
+// MULTER STORAGE CONFIG
+// ======================
 const storage = multer.diskStorage({
   destination(req, file, cb) {
     cb(null, path.join(__dirname, "../uploads"));
   },
   filename(req, file, cb) {
-    const unique = `photo-${Date.now()}-${Math.floor(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+    const unique = `photo-${Date.now()}-${Math.floor(
+      Math.random() * 1e9
+    )}${path.extname(file.originalname)}`;
     cb(null, unique);
   },
 });
 
 const upload = multer({ storage });
 
-//  POST /api/upload
+// ======================
+// UPLOAD ROUTE
+// ======================
 router.post("/", upload.single("photo"), (req, res) => {
-  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+  if (!req.file) {
+    return res.status(400).json({ message: "No file uploaded" });
+  }
 
-  const baseURL =
-    process.env.BACKEND_URL?.replace(/\/$/, "") || "http://localhost:5000";
-  const fileUrl = `${baseURL}/uploads/${req.file.filename}`;
+  // Dynamically detect correct public base URL
+  const isRender = process.env.RENDER === "true" || !!process.env.RENDER_EXTERNAL_URL;
 
-  console.log("File uploaded:", fileUrl);
+  const backendURL =
+    process.env.BACKEND_URL?.replace(/\/$/, "") ||
+    process.env.RENDER_EXTERNAL_URL?.replace(/\/$/, "") ||
+    (isRender ? `https://${req.get("host")}` : "http://localhost:5000");
 
-  // Return same key consistently used by frontend
+  const fileUrl = `${backendURL}/uploads/${req.file.filename}`;
+  console.log(" File uploaded:", fileUrl);
+
   res.status(200).json({ url: fileUrl });
 });
 
+// ======================
 export default router;
