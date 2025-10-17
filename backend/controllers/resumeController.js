@@ -103,7 +103,8 @@ export const generateResume = async (req, res) => {
     });
     res.send(pdfBuffer);
   } catch (err) {
-    console.error("PDF generation failed:", err);
-    res.status(500).json({ error: "Failed to generate PDF" });
-  }
+  console.error("PDF generation failed:", err);
+  res.status(500).json({ error: err.message });
+}
+
 };
