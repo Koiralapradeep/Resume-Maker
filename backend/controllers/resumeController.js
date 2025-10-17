@@ -1,45 +1,64 @@
-import axios from "axios";
-import Handlebars from "handlebars";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import handlebars from "handlebars";
+import puppeteer from "puppeteer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Make photo URLs absolute
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
-function absolutizePhoto(data) {
-  const copy = { ...data, personal: { ...(data.personal || {}) } };
-  const p = copy.personal?.photo;
-  if (p && !/^https?:\/\//i.test(p)) {
-    copy.personal.photo = `${BACKEND_URL.replace(/\/$/, "")}/${String(p).replace(/^\/+/, "")}`;
-  }
-  return copy;
-}
-
 export const generateResumePDF = async (req, res) => {
   try {
-    // 1️⃣ Compile Handlebars template
-    const htmlPath = path.join(__dirname, "../templates/modernTemplate.html");
-    const html = fs.readFileSync(htmlPath, "utf-8");
-    const template = Handlebars.compile(html);
-    const compiledHTML = template(absolutizePhoto(req.body));
+    const data = req.body;
 
-    // 2️⃣ Call html2pdf.app API
-    const apiKey = process.env.HTML2PDF_KEY;
-    const response = await axios.post(
-      "https://api.html2pdf.app/v1/generate",
-      { html: compiledHTML, apiKey },
-      { responseType: "arraybuffer" }
-    );
+    // Detect correct paths
+    const templatePath = path.join(__dirname, "../templates/modernTemplate.html");
 
-    // 3️⃣ Return PDF
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'attachment; filename="resume.pdf"');
-    res.send(response.data);
+    // Read and compile HTML template
+    const html = fs.readFileSync(templatePath, "utf8");
+    const template = handlebars.compile(html);
+
+    // Prepare public photo URL (if any)
+    let photoUrl = data.personal?.photo || null;
+    if (photoUrl && photoUrl.startsWith("http://localhost")) {
+      // Replace localhost URL with public backend Render URL
+      const publicURL =
+        process.env.BACKEND_URL?.replace(/\/$/, "") ||
+        process.env.RENDER_EXTERNAL_URL?.replace(/\/$/, "") ||
+        `https://${req.get("host")}`;
+      photoUrl = photoUrl.replace("http://localhost:5000", publicURL);
+      data.personal.photo = photoUrl;
+    }
+
+    //  Generate HTML with data
+    const renderedHTML = template(data);
+
+    //  Launch Puppeteer (Render-safe)
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
+    const page = await browser.newPage();
+    await page.setContent(renderedHTML, { waitUntil: "networkidle0" });
+
+    //  Generate PDF
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+    });
+
+    await browser.close();
+
+    //  Return PDF response
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${data.personal?.name || "resume"}.pdf"`,
+    });
+
+    res.send(pdfBuffer);
   } catch (error) {
-    console.error("PDF generation error:", error.message);
-    res.status(500).json({ error: "Failed to generate PDF" });
+    console.error(" PDF generation error:", error);
+    res.status(500).json({ message: "PDF generation failed", error: error.message });
   }
 };
